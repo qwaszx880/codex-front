@@ -2,6 +2,11 @@ import type { Cluster, Json, Membership, Operation, Principal, Project, Role } f
 
 const API_URL = import.meta.env.VITE_API_URL || '/api'
 
+export interface OidcMetadata {
+  authorization_endpoint: string
+  token_endpoint: string
+}
+
 export class ApiError extends Error {
   constructor(public status: number, public detail: string) { super(detail) }
 }
@@ -18,7 +23,19 @@ async function request<T>(path: string, token: string, init?: RequestInit): Prom
   return response.status === 204 ? undefined as T : response.json()
 }
 
+async function oidcRequest<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, init)
+  if (!response.ok) throw new Error(`OIDC request failed (${response.status})`)
+  return response.json()
+}
+
 export const api = {
+  oidcMetadata: (issuer: string) => oidcRequest<OidcMetadata>(`${issuer.replace(/\/$/, '')}/.well-known/openid-configuration`),
+  exchangeOidcCode: (endpoint: string, values: Record<string, string>) => oidcRequest<{ access_token: string }>(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams(values),
+  }),
   me: (t: string) => request<Principal>('/v1/principals/me', t),
   projects: (t: string) => request<Project[]>('/v1/projects', t),
   clusters: (t: string, projectId: string) => request<Cluster[]>(`/v1/clusters?project_id=${projectId}`, t),

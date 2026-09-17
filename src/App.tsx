@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Boxes, CircleUserRound, CloudCog, FolderKanban, LayoutDashboard, LogOut, Menu, ShieldCheck, X } from 'lucide-react'
 import { Navigate, NavLink, Route, Routes } from 'react-router-dom'
 import { api } from './lib/api'
+import { finishOidcLogin } from './lib/oidc'
 import { AuthPage } from './pages/AuthPage'
 import { ClusterDetail } from './pages/ClusterDetail'
 import { ClustersPage } from './pages/ClustersPage'
@@ -17,6 +18,7 @@ export default function App() {
   const [projects, setProjects] = useState<Project[]>([])
   const [authError, setAuthError] = useState('')
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [handlingCallback, setHandlingCallback] = useState(() => new URLSearchParams(window.location.search).has('code'))
 
   const authenticate = useCallback(async (next: string) => {
     setAuthError('')
@@ -28,8 +30,19 @@ export default function App() {
   }, [])
 
   useEffect(() => { if (token && !me) authenticate(token).catch(() => { sessionStorage.removeItem(TOKEN_KEY); setToken('') }) }, [token, me, authenticate])
+  useEffect(() => {
+    if (!handlingCallback) return
+    finishOidcLogin(window.location.search)
+      .then(accessToken => {
+        window.history.replaceState({}, document.title, window.location.pathname)
+        if (!accessToken) throw new Error('The identity provider did not return an authorization code.')
+        return authenticate(accessToken)
+      })
+      .catch(error => setAuthError(error instanceof Error ? error.message : 'OIDC sign-in failed'))
+      .finally(() => setHandlingCallback(false))
+  }, [handlingCallback, authenticate])
   const logout = () => { sessionStorage.removeItem(TOKEN_KEY); setToken(''); setMe(undefined); setProjects([]) }
-  if (!token || !me) return <AuthPage onToken={authenticate} error={authError} checking={Boolean(token)} />
+  if (!token || !me) return <AuthPage onToken={authenticate} error={authError} checking={Boolean(token) || handlingCallback} />
 
   const links = [
     { to: '/', label: 'Overview', icon: LayoutDashboard },
