@@ -24,4 +24,25 @@ describe('API client', () => {
 
     await expect(api.projects('bad-token')).rejects.toEqual(new ApiError(403, 'Permission denied'))
   })
+
+  it('discovers OIDC endpoints and exchanges a public-client authorization code', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        authorization_endpoint: 'https://identity.example/authorize',
+        token_endpoint: 'https://identity.example/token',
+      })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'oidc-token' })))
+
+    const metadata = await api.oidcMetadata('https://identity.example/')
+    const tokens = await api.exchangeOidcCode(metadata.token_endpoint, {
+      grant_type: 'authorization_code', code: 'code', client_id: 'public-client',
+      redirect_uri: 'https://console.example/', code_verifier: 'verifier',
+    })
+
+    expect(tokens.access_token).toBe('oidc-token')
+    expect(fetchMock).toHaveBeenNthCalledWith(1, 'https://identity.example/.well-known/openid-configuration', undefined)
+    const exchange = fetchMock.mock.calls[1][1] as RequestInit
+    expect(exchange.body?.toString()).toContain('code_verifier=verifier')
+    expect(exchange.body?.toString()).not.toContain('client_secret')
+  })
 })

@@ -1,83 +1,94 @@
 # Northstar cluster console
 
-A modern React console for the [Cluster Control Plane](https://github.com/qwaszx880/codex). It covers the complete documented API surface: identity, visible projects, project role assignments, cluster creation, scaling and upgrades, operation history, revisions, normalized health, raw resources, and conditions.
+Northstar is a **frontend-only** React console for an existing Cluster Control Plane deployment. FastAPI, its database, queue, workers, migrations, and identity provider run outside this repository and are managed by a separate deployment.
 
-## Highlights
+The primary `compose.yaml` starts exactly one application service: `frontend`.
 
-- Responsive fleet dashboard and cluster detail views
-- Guided cluster provisioning with safe local defaults
-- Scale and Kubernetes upgrade actions
-- Full revision, operation, health, resource, and condition inspection
-- Project membership and role management
-- OIDC bearer token injection for local development (kept in `sessionStorage` only)
-- A Compose stack with the API, PostgreSQL, RabbitMQ, Keycloak, executor, observer, Flower, and Adminer
+## Connect to FastAPI through a host port
 
-## Quick start (Docker Compose)
-
-**Requirements:** Docker Engine or Docker Desktop with Compose v2, and internet access on the first build. The Compose build fetches the backend directly from its GitHub repository.
+When the separate FastAPI deployment publishes port 8000 on the Docker host:
 
 ```bash
 cp .env.example .env
-docker compose up --build -d
-docker compose ps -a
+docker compose up
 ```
 
-Wait for `migrate` and `bootstrap` to finish successfully, then get the local developer token:
+The browser calls `/api`. Vite proxies those requests to `API_PROXY_TARGET`, which defaults to `http://host.docker.internal:8000`. The default bind address is intentionally limited to `127.0.0.1`; change `CONSOLE_BIND_ADDRESS` only when remote access is required.
+
+For development without Compose:
 
 ```bash
-make token
+npm ci
+API_PROXY_TARGET=http://localhost:8000 npm run dev
 ```
 
-Open <http://localhost:5173>, paste the printed token, and select **Open console**. Local credentials and services are development-only.
+## Connect separate Compose projects on a shared network
 
-| Service | URL / credentials |
+Create the network once, then start this frontend with the optional overlay:
+
+```bash
+docker network create platform-network
+docker compose -f compose.yaml -f compose.external-network.yaml up
+```
+
+The overlay only attaches `frontend` to the external `${PLATFORM_NETWORK:-platform-network}` network. On this network, `API_PROXY_TARGET` defaults to `http://api:8000`.
+
+The backend Compose project must attach its **existing** API service to the same external network and give it the `api` alias. For example, add an overlay in the backend repository:
+
+```yaml
+services:
+  api:
+    networks:
+      platform:
+        aliases: [api]
+
+networks:
+  platform:
+    name: ${PLATFORM_NETWORK:-platform-network}
+    external: true
+```
+
+This repository neither defines nor starts that API service.
+
+## OIDC login
+
+The browser uses OIDC discovery at `<issuer>/.well-known/openid-configuration` and Authorization Code with PKCE (S256). Configure:
+
+| Variable | Purpose |
 |---|---|
-| Northstar console | <http://localhost:5173> |
-| FastAPI / OpenAPI | <http://localhost:8000/docs> |
-| Keycloak | <http://localhost:8081> (`admin` / `admin`) |
-| Adminer | <http://localhost:8080> (`postgres`, server `postgres`, `platform` / `platform`) |
-| RabbitMQ | <http://localhost:15672> (`platform` / `platform`) |
-| Flower | <http://localhost:5555> |
+| `VITE_OIDC_ISSUER` | Browser-accessible issuer URL |
+| `VITE_OIDC_CLIENT_ID` | Public browser client identifier |
+| `VITE_OIDC_SCOPE` | Requested scopes (default `openid profile email`) |
+| `VITE_OIDC_REDIRECT_URI` | Registered callback URI; blank uses the console origin plus `/` |
+| `VITE_ALLOW_TOKEN_INJECTION` | Set `true` only to show manual token entry for development |
 
-The imported application user is `developer` / `developer`. `make token` exchanges these local credentials with Keycloak; the console itself never handles passwords.
+Register the OIDC application as a **public client** using Authorization Code + PKCE and register the exact redirect URI. Never configure a browser client secret. All `VITE_*` variables are public build-time values embedded in the frontend bundle; they must not contain secrets.
 
-### Stop or reset
+Access tokens, OIDC state, and the temporary PKCE verifier are kept in `sessionStorage`. Bearer tokens are never written to `localStorage`. The code exchange sends no client secret.
 
-```bash
-make down                 # retain database and queues
-make reset                # delete all local volumes and state
-```
+The identity provider must permit browser requests from the console origin to its discovery and token endpoints. This repository does not include or start an OIDC provider.
 
-If accessing Compose from another machine, set `PLATFORM_PUBLIC_HOST` in `.env` to the hostname or IP that the browser uses. This is important because the token issuer must match the backend OIDC configuration.
+## Production image
 
-## Run only the frontend
-
-Use this when the FastAPI application and its dependencies already run locally:
-
-```bash
-npm install
-npm run dev
-```
-
-Vite serves the app at <http://localhost:5173> and proxies `/api` to the Compose service `api`. When running Vite directly on the host, override the API URL:
-
-```bash
-VITE_API_URL=http://localhost:8000 npm run dev
-```
-
-The upstream API does not enable browser CORS by default, so the full Compose proxy is recommended. For a production-style static image, build and run the included multi-stage image on the same Docker network as a service named `api`:
+The multi-stage Docker image serves static assets with Nginx and proxies `/api` through the runtime `API_PROXY_TARGET` value:
 
 ```bash
 docker build -t northstar-console .
+docker run --rm -p 8080:80 \
+  --add-host host.docker.internal:host-gateway \
+  -e API_PROXY_TARGET=http://host.docker.internal:8000 \
+  northstar-console
 ```
 
-## Development commands
+OIDC `VITE_*` settings are build-time values. Supply them when building the application for each environment.
+
+## Development checks
 
 ```bash
 npm run check              # ESLint
 npm test                   # Vitest
 npm run build              # Type-check and production build
-docker compose config      # Validate the local stack
+docker compose config      # Validate the frontend Compose project
 ```
 
 Source layout:
@@ -85,34 +96,9 @@ Source layout:
 ```text
 src/
 ├── components/            # Shared presentational primitives
-├── lib/api.ts             # Typed FastAPI client
+├── lib/api.ts             # All HTTP access, including OIDC discovery and exchange
+├── lib/oidc.ts            # Authorization Code + PKCE browser flow
 ├── pages/                 # Route-level product views
 ├── App.tsx                # Authentication and application shell
 └── styles.css             # Responsive visual system
 ```
-
-## Authentication and security
-
-The console accepts an existing OIDC access token for development and sends it as a bearer token on every API request. The token is stored in browser `sessionStorage`, not local storage, and is removed when signing out or closing the tab. This injection flow is convenient for local testing but is not a replacement for a production authorization-code + PKCE flow. Put the console and API behind TLS and integrate your OIDC client before production deployment.
-
-## API capability map
-
-| Capability | Console location |
-|---|---|
-| Current principal and visible projects | Sign-in bootstrap and application shell |
-| List/create clusters | **Clusters** |
-| Cluster metadata and health | **Clusters → cluster → Overview** |
-| Scale / upgrade | **Clusters → cluster → Overview** |
-| Operations, revisions, resources, conditions | Matching cluster detail tabs |
-| Project roles and members | **Projects & access** |
-| Add/remove a project role | **Projects & access** |
-| Health and metrics endpoints | Compose health/log tooling; FastAPI `/healthz` and `/metrics` |
-
-Cluster deletion and general patching are not shown because the backend explicitly documents them as future work rather than implemented API functions.
-
-## Troubleshooting
-
-- **Token rejected:** ensure Keycloak is ready, regenerate it with `make token`, and verify `PLATFORM_PUBLIC_HOST` matches the browser-visible hostname.
-- **Empty operations immediately after create:** mutations are asynchronous. Refresh after the executor and fake observer process the command.
-- **Backend image rebuild:** run `docker compose build --no-cache api`, then `docker compose up -d`.
-- **Start fresh:** run `make reset`, followed by `docker compose up --build -d`.
