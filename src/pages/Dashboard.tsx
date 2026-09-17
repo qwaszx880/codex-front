@@ -2,12 +2,15 @@ import { useEffect, useState } from 'react'
 import { Activity, ArrowRight, Boxes, CircleCheck, Clock3, FolderKanban, Plus, ServerCog } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { api } from '../lib/api'
+import { usePolling } from '../lib/usePolling'
 import { Empty, ErrorBox, Loading, PageHeader, Status } from '../components/ui'
 import type { Cluster, Operation, Principal, Project } from '../types'
 
 export function Dashboard({ token, projects, me }: { token: string; projects: Project[]; me: Principal }) {
   const [clusters, setClusters] = useState<Cluster[]>([]), [operations, setOperations] = useState<Operation[]>([]), [loading, setLoading] = useState(true), [error, setError] = useState('')
-  useEffect(() => { (async () => { try { const cs = (await Promise.all(projects.map(p => api.clusters(token, p.id)))).flat(); setClusters(cs); setOperations((await Promise.all(cs.map(c => api.operations(token, c.id)))).flat().sort((a,b) => b.created_at.localeCompare(a.created_at)).slice(0,5)) } catch(e) { setError(e instanceof Error ? e.message : 'Could not load overview') } finally { setLoading(false) } })() }, [token, projects])
+  const load = async () => { try { const cs = (await Promise.all(projects.map(p => api.clusters(token, p.id)))).flat(); setClusters(cs); setOperations((await Promise.all(cs.map(c => api.operations(token, c.id)))).flat().sort((a,b) => b.created_at.localeCompare(a.created_at)).slice(0,5)); setError('') } catch(e) { setError(e instanceof Error ? e.message : 'Could not load overview') } finally { setLoading(false) } }
+  useEffect(() => { load() }, [token, projects]) // eslint-disable-line react-hooks/exhaustive-deps
+  usePolling(load, clusters.some(c => c.observed_revision !== c.desired_revision) || operations.some(o => ['ACCEPTED','RECONCILING'].includes(o.state)))
   const ready = clusters.filter(c => c.applied_revision === c.desired_revision && c.observed_revision === c.desired_revision).length
   return <div className="page"><PageHeader eyebrow="Control plane" title={`Good day, ${me.display_name?.split(' ')[0] || me.username || 'operator'}.`} text="Here’s what is happening across your platform." actions={<Link className="button primary" to="/clusters?create=true"><Plus /> New cluster</Link>} />
     {error && <ErrorBox message={error} />}{loading ? <Loading /> : <>

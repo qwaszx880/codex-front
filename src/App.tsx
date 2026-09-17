@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Boxes, CircleUserRound, CloudCog, FolderKanban, LayoutDashboard, LogOut, Menu, ShieldCheck, X } from 'lucide-react'
+import { Boxes, Building2, CircleUserRound, CloudCog, FolderKanban, LayoutDashboard, LogOut, Menu, Settings2, ShieldCheck, X } from 'lucide-react'
 import { Navigate, NavLink, Route, Routes } from 'react-router-dom'
 import { api } from './lib/api'
 import { finishOidcLogin } from './lib/oidc'
@@ -8,6 +8,8 @@ import { ClusterDetail } from './pages/ClusterDetail'
 import { ClustersPage } from './pages/ClustersPage'
 import { Dashboard } from './pages/Dashboard'
 import { ProjectsPage } from './pages/ProjectsPage'
+import { AdministrationPage } from './pages/AdministrationPage'
+import { ConfigurationPage } from './pages/ConfigurationPage'
 import type { Principal, Project } from './types'
 
 const TOKEN_KEY = 'cluster-console-token'
@@ -28,6 +30,7 @@ export default function App() {
       setToken(next); setMe(principal); setProjects(visibleProjects)
     } catch (error) { setAuthError(error instanceof Error ? error.message : 'Authentication failed'); throw error }
   }, [])
+  const refreshProjects = useCallback(async () => { setProjects(await api.projects(token)) }, [token])
 
   useEffect(() => { if (token && !me) authenticate(token).catch(() => { sessionStorage.removeItem(TOKEN_KEY); setToken('') }) }, [token, me, authenticate])
   useEffect(() => {
@@ -48,6 +51,8 @@ export default function App() {
     { to: '/', label: 'Overview', icon: LayoutDashboard },
     { to: '/clusters', label: 'Clusters', icon: Boxes },
     { to: '/projects', label: 'Projects & access', icon: FolderKanban },
+    { to: '/configuration', label: 'Infrastructure', icon: Settings2 },
+    { to: '/administration', label: 'Administration', icon: Building2 },
   ]
   return <div className="app-shell">
     <aside className={mobileOpen ? 'sidebar open' : 'sidebar'}>
@@ -63,6 +68,8 @@ export default function App() {
         <Route path="/clusters" element={<ClustersPage token={token} projects={projects} />} />
         <Route path="/clusters/:id" element={<ClusterDetail token={token} />} />
         <Route path="/projects" element={<ProjectsPage token={token} projects={projects} />} />
+        <Route path="/configuration" element={<ConfigurationPage token={token} projects={projects} />} />
+        <Route path="/administration" element={<AdministrationPage token={token} onProjectsChanged={refreshProjects} />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </main>

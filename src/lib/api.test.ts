@@ -25,6 +25,27 @@ describe('API client', () => {
     await expect(api.projects('bad-token')).rejects.toEqual(new ApiError(403, 'Permission denied'))
   })
 
+  it('uses the operation endpoint for asynchronous status polling', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ id: 'op-1', state: 'RECONCILING' }), { status: 200 }),
+    )
+
+    expect((await api.operation('test-token', 'op-1')).state).toBe('RECONCILING')
+    expect(fetchMock).toHaveBeenCalledWith('/api/v1/operations/op-1', expect.anything())
+  })
+
+  it('sends provider configuration to the project API', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      new Response(JSON.stringify({ id: 'provider-1', name: 'Lab' }), { status: 201 }),
+    )
+
+    await api.createProviderReference('test-token', 'project-1', { provider: 'vsphere', name: 'Lab' })
+
+    const [, init] = fetchMock.mock.calls[0]
+    expect(fetchMock.mock.calls[0][0]).toBe('/api/v1/projects/project-1/provider-references')
+    expect(init).toEqual(expect.objectContaining({ method: 'POST', body: JSON.stringify({ provider: 'vsphere', name: 'Lab' }) }))
+  })
+
   it('discovers OIDC endpoints and exchanges a public-client authorization code', async () => {
     const fetchMock = vi.spyOn(globalThis, 'fetch')
       .mockResolvedValueOnce(new Response(JSON.stringify({
