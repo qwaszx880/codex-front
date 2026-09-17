@@ -1,0 +1,18 @@
+import { useEffect, useState } from 'react'
+import { Activity, ArrowRight, Boxes, CircleCheck, Clock3, FolderKanban, Plus, ServerCog } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { api } from '../lib/api'
+import { Empty, ErrorBox, Loading, PageHeader, Status } from '../components/ui'
+import type { Cluster, Operation, Principal, Project } from '../types'
+
+export function Dashboard({ token, projects, me }: { token: string; projects: Project[]; me: Principal }) {
+  const [clusters, setClusters] = useState<Cluster[]>([]), [operations, setOperations] = useState<Operation[]>([]), [loading, setLoading] = useState(true), [error, setError] = useState('')
+  useEffect(() => { (async () => { try { const cs = (await Promise.all(projects.map(p => api.clusters(token, p.id)))).flat(); setClusters(cs); setOperations((await Promise.all(cs.map(c => api.operations(token, c.id)))).flat().sort((a,b) => b.created_at.localeCompare(a.created_at)).slice(0,5)) } catch(e) { setError(e instanceof Error ? e.message : 'Could not load overview') } finally { setLoading(false) } })() }, [token, projects])
+  const ready = clusters.filter(c => c.applied_revision === c.desired_revision && c.observed_revision === c.desired_revision).length
+  return <div className="page"><PageHeader eyebrow="Control plane" title={`Good day, ${me.display_name?.split(' ')[0] || me.username || 'operator'}.`} text="Here’s what is happening across your platform." actions={<Link className="button primary" to="/clusters?create=true"><Plus /> New cluster</Link>} />
+    {error && <ErrorBox message={error} />}{loading ? <Loading /> : <>
+      <div className="stats"><article><span><Boxes /></span><div><small>Total clusters</small><strong>{clusters.length}</strong><em>Across {projects.length} project{projects.length === 1 ? '' : 's'}</em></div></article><article><span className="green"><CircleCheck /></span><div><small>Converged</small><strong>{ready}</strong><em>{clusters.length ? Math.round(ready/clusters.length*100) : 0}% of fleet</em></div></article><article><span className="orange"><Activity /></span><div><small>In progress</small><strong>{operations.filter(o => ['ACCEPTED','RECONCILING'].includes(o.state)).length}</strong><em>Recent operations</em></div></article><article><span className="violet"><FolderKanban /></span><div><small>Projects</small><strong>{projects.length}</strong><em>Visible to you</em></div></article></div>
+      <div className="dashboard-grid"><section className="panel"><div className="panel-head"><div><h2>Cluster fleet</h2><p>Desired and observed revisions</p></div><Link to="/clusters">View all <ArrowRight /></Link></div>{clusters.length ? <div className="cluster-list">{clusters.slice(0,5).map(c => <Link to={`/clusters/${c.id}`} key={c.id}><span className="cluster-icon"><ServerCog /></span><span><b>{c.name}</b><small>{projects.find(p => p.id === c.project_id)?.name}</small></span><span className="revision">rev {c.observed_revision || '—'} / {c.desired_revision}</span><Status value={c.observed_revision === c.desired_revision ? 'Healthy' : 'Syncing'} /></Link>)}</div> : <Empty icon={<Boxes />} title="No clusters yet" text="Create your first workload cluster to begin." />}</section>
+      <section className="panel"><div className="panel-head"><div><h2>Recent activity</h2><p>Latest control-plane operations</p></div></div>{operations.length ? <div className="timeline">{operations.map(o => <Link to={`/clusters/${o.cluster_id}`} key={o.id}><i /><span><b>{o.kind.toLowerCase()} cluster</b><small><Clock3 /> {new Date(o.created_at).toLocaleString()}</small></span><Status value={o.state} /></Link>)}</div> : <Empty icon={<Activity />} title="No activity" text="Operations will appear here." />}</section></div>
+    </>}</div>
+}

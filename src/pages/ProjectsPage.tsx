@@ -1,0 +1,18 @@
+import { FormEvent, useEffect, useState } from 'react'
+import { FolderKanban, ShieldCheck, Trash2, UserPlus } from 'lucide-react'
+import { api } from '../lib/api'
+import { Empty, ErrorBox, Loading, PageHeader } from '../components/ui'
+import type { Membership, Project, Role } from '../types'
+
+export function ProjectsPage({ token, projects }: { token: string; projects: Project[] }) {
+  const [projectId, setProjectId] = useState(projects[0]?.id || ''), [members, setMembers] = useState<Membership[]>([]), [roles, setRoles] = useState<Role[]>([]), [principal, setPrincipal] = useState(''), [role, setRole] = useState(''), [loading, setLoading] = useState(true), [error, setError] = useState('')
+  const load = async () => { if (!projectId) return; setLoading(true); try { const [m,r] = await Promise.all([api.members(token,projectId), api.roles(token,projectId)]); setMembers(m); setRoles(r); setRole(current => current || r[0]?.id || ''); setError('') } catch(e) { setError(e instanceof Error ? e.message : 'You may not have project.admin permission.') } finally { setLoading(false) } }
+  useEffect(() => { load() }, [projectId, token]) // eslint-disable-line react-hooks/exhaustive-deps
+  async function add(e: FormEvent) { e.preventDefault(); try { await api.addMember(token,projectId,principal,role); setPrincipal(''); await load() } catch(e) { setError(e instanceof Error ? e.message : 'Could not add member') } }
+  async function remove(m: Membership) { try { await api.removeMember(token,projectId,m.principal.id,m.role.id); await load() } catch(e) { setError(e instanceof Error ? e.message : 'Could not remove member') } }
+  return <div className="page"><PageHeader eyebrow="Identity & access" title="Projects" text="Review tenancy and manage project role assignments." />{error && <ErrorBox message={error} />}
+    <div className="project-picker">{projects.map(p=><button className={p.id===projectId?'active':''} onClick={()=>setProjectId(p.id)} key={p.id}><FolderKanban /><span><b>{p.name}</b><small>{p.namespace}</small></span></button>)}</div>
+    {loading ? <Loading /> : <div className="detail-grid"><section className="panel"><div className="panel-head"><div><h2>Project members</h2><p>People and service identities with direct access.</p></div><ShieldCheck /></div>{members.length ? <div className="member-list">{members.map(m=><div key={m.id}><span className="avatar">{(m.principal.display_name || m.principal.username || 'P')[0]}</span><span><b>{m.principal.display_name || m.principal.username || 'Principal'}</b><small>{m.principal.email || m.principal.id}</small></span><span className="role-pill">{m.role.name}</span><button className="icon-button danger" onClick={()=>remove(m)} title="Remove role"><Trash2 /></button></div>)}</div> : <Empty icon={<UserPlus />} title="No direct members" text="Organization memberships may still grant access." />}</section>
+      <section className="panel"><div className="panel-head"><div><h2>Assign a role</h2><p>Principal IDs refer to existing OIDC-backed identities.</p></div></div><form onSubmit={add} className="stack-form"><label>Principal ID<input required value={principal} onChange={e=>setPrincipal(e.target.value)} placeholder="00000000-0000-…" /></label><label>Project role<select value={role} onChange={e=>setRole(e.target.value)}>{roles.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}</select></label><button className="button primary"><UserPlus /> Add member</button></form><div className="permission-list"><h3>Available roles</h3>{roles.map(r=><div key={r.id}><b>{r.name}</b><small>{r.permissions.join(' · ')}</small></div>)}</div></section></div>}
+  </div>
+}
